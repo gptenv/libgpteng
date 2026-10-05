@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>libgpteng wgpu WASM demo</title>
+    <style>
+      html, body { width: 100%; height: 100%; margin: 0; background: #0b1018; color: #e5edf7; font: 14px system-ui, sans-serif; }
+      main { height: 100%; display: grid; grid-template-rows: auto 1fr; }
+      header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #111a27; }
+      button { padding: 7px 12px; color: inherit; background: #26364b; border: 1px solid #405774; border-radius: 5px; cursor: pointer; }
+      #status { color: #a9bbd2; }
+      canvas { width: 100%; height: 100%; display: block; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <strong>libgpteng · wgpu + WASM</strong>
+        <button id="spawn">Add attached sphere</button>
+        <button id="script">Run Lua</button>
+        <button id="controls">Attach input script</button>
+        <button id="texture">Spawn textured cube</button>
+        <button id="gltf">Load glTF mesh</button>
+        <button id="load-image">Texture caricature from image</button>
+        <input id="image-file" type="file" accept="image/png,image/jpeg,image/webp,image/bmp,image/gif,image/tiff" hidden />
+        <button id="visibility">Hide caricature</button>
+        <button id="lighting">Warm lighting</button>
+        <button id="projection">Orthographic camera</button>
+        <span id="status">Initializing WebGPU…</span>
+      </header>
+      <canvas id="scene"></canvas>
+    </main>
+    <script type="module">
+      import init, { BrowserEngine } from "../../pkg/libgpteng.js";
+
+      const status = document.querySelector("#status");
+      try {
+        await init();
+        const engine = await BrowserEngine.start(document.querySelector("#scene"));
+        window.engine = engine;
+        status.textContent = "Ready · Rust engine rendering";
+        const keyName = (code) => code.startsWith("Key") ? code.slice(3).toLowerCase()
+          : code.startsWith("Digit") ? code.slice(5) : code.toLowerCase();
+        const heldKeys = new Set();
+        window.addEventListener("keydown", (event) => {
+          const key = keyName(event.code);
+          heldKeys.add(key);
+          engine.set_key_down(key, true);
+        });
+        window.addEventListener("keyup", (event) => {
+          const key = keyName(event.code);
+          heldKeys.delete(key);
+          engine.set_key_down(key, false);
+        });
+        window.addEventListener("blur", () => {
+          for (const key of heldKeys) engine.set_key_down(key, false);
+          heldKeys.clear();
+          engine.set_mouse_button_down("left", false);
+        });
+        const canvas = document.querySelector("#scene");
+        canvas.addEventListener("pointerdown", (event) => {
+          canvas.setPointerCapture(event.pointerId);
+          engine.set_mouse_button_down(event.button === 2 ? "right" : "left", true);
+        });
+        canvas.addEventListener("pointerup", (event) => {
+          engine.set_mouse_button_down(event.button === 2 ? "right" : "left", false);
+        });
+        canvas.addEventListener("pointermove", (event) => {
+          if (event.buttons) engine.add_mouse_motion(event.movementX, event.movementY);
+        });
+        canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+        document.querySelector("#spawn").addEventListener("click", () => {
+          const id = engine.spawn_primitive("Browser child sphere", "sphere", 1.25, 0, 0);
+          engine.set_parent(id, 1n);
+          status.textContent = `Spawned sphere ${id} under the animated caricature head`;
+        });
+        document.querySelector("#script").addEventListener("click", () => {
+          engine.run_lua('local floor = engine.spawn("Physics floor", 0, -1.5, 0, "plane")\nengine.set_material(floor, 0.24, 0.3, 0.38, 1, 0.85, 0)\nengine.set_box_collider(floor, 5, 0.25, 5, 0, 0.8)\nengine.add_rigid_body(floor, "static", 1, 0, 0)\nlocal e = engine.spawn("Lua physics cube", 0, 0, -1, "cube")\nengine.set_scale(e, 0.5, 0.5, 0.5)\nengine.set_material(e, 0.95, 0.3, 0.12, 1, 0.18, 0.85)\nengine.set_box_collider(e, 0.5, 0.5, 0.5, 0.05, 0.7)\nengine.set_parent(e, 1)\nengine.add_rigid_body(e, "dynamic", 1, 0.3, 0.05)\nengine.apply_force(e, 0, 8, 0)');
+          status.textContent = "Lua collision scene created";
+        });
+        document.querySelector("#controls").addEventListener("click", () => {
+          engine.attach_script(1n, 'local id = engine.self()\nlocal x = 0\nlocal z = 0\nfunction update(dt)\n  local speed = 2 * dt\n  if engine.is_key_down("a") then x = x - speed end\n  if engine.is_key_down("d") then x = x + speed end\n  if engine.is_key_down("w") then z = z - speed end\n  if engine.is_key_down("s") then z = z + speed end\n  engine.set_position(id, x, 0, z)\nend');
+          status.textContent = "Lua input script attached · use W/A/S/D";
+        });
+        document.querySelector("#texture").addEventListener("click", () => {
+          const pixels = new Uint8Array([
+            245, 70, 115, 255, 35, 190, 230, 255,
+            250, 205, 65, 255, 42, 52, 75, 255,
+          ]);
+          const textureId = engine.create_texture_asset(2, 2, pixels);
+          const entityId = engine.spawn_primitive("Textured checker cube", "cube", -1.4, 0, 0);
+          engine.set_base_color_texture(entityId, textureId);
+          status.textContent = `Texture ${textureId} assigned to cube ${entityId}`;
+        });
+        document.querySelector("#gltf").addEventListener("click", () => {
+          const positions = new Float32Array([-0.55, -0.45, 0, 0.55, -0.45, 0, 0, 0.55, 0]);
+          const indices = new Uint16Array([0, 1, 2]);
+          const buffer = new Uint8Array(positions.byteLength + indices.byteLength);
+          buffer.set(new Uint8Array(positions.buffer), 0);
+          buffer.set(new Uint8Array(indices.buffer), positions.byteLength);
+          let binary = "";
+          for (const byte of buffer) binary += String.fromCharCode(byte);
+          const embedded = btoa(binary);
+          const document = {
+            asset: { version: "2.0" },
+            buffers: [{ uri: `data:application/octet-stream;base64,${embedded}`, byteLength: buffer.byteLength }],
+            bufferViews: [
+              { buffer: 0, byteOffset: 0, byteLength: positions.byteLength, target: 34962 },
+              { buffer: 0, byteOffset: positions.byteLength, byteLength: indices.byteLength, target: 34963 },
+            ],
+            accessors: [
+              { bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [-0.55, -0.45, 0], max: [0.55, 0.55, 0] },
+              { bufferView: 1, componentType: 5123, count: 3, type: "SCALAR" },
+            ],
+            meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
+            nodes: [{ mesh: 0 }],
+            scenes: [{ nodes: [0] }],
+            scene: 0,
+          };
+          const source = new TextEncoder().encode(JSON.stringify(document));
+          const id = engine.load_gltf_mesh("Embedded glTF triangle", source, -1.4, 0, 0);
+          status.textContent = `Loaded embedded glTF mesh as entity ${id}`;
+        });
+        const imageFile = document.querySelector("#image-file");
+        document.querySelector("#load-image").addEventListener("click", () => imageFile.click());
+        imageFile.addEventListener("change", async () => {
+          const file = imageFile.files?.[0];
+          if (!file) return;
+          try {
+            const textureId = engine.load_texture_asset(new Uint8Array(await file.arrayBuffer()));
+            engine.set_base_color_texture(2n, textureId);
+            status.textContent = `Loaded ${file.name} as texture ${textureId} on the caricature`;
+          } catch (error) {
+            status.textContent = `Image load failed: ${error}`;
+          } finally {
+            imageFile.value = "";
+          }
+        });
+        const visibilityButton = document.querySelector("#visibility");
+        visibilityButton.addEventListener("click", () => {
+          const localVisible = engine.visibility(1n);
+          const nextVisible = !localVisible;
+          engine.set_visibility(1n, nextVisible);
+          visibilityButton.textContent = nextVisible ? "Hide caricature" : "Show caricature";
+          status.textContent = `Caricature visibility ${nextVisible ? "enabled" : "disabled"}`;
+        });
+        let warmLighting = false;
+        document.querySelector("#lighting").addEventListener("click", (event) => {
+          warmLighting = !warmLighting;
+          engine.set_lighting(
+            [-0.4, 0.7, 0.6],
+            warmLighting ? [1.0, 0.42, 0.16] : [1.0, 1.0, 1.0],
+            warmLighting ? 1.7 : 1.0,
+            warmLighting ? [0.18, 0.08, 0.035] : [0.12, 0.12, 0.12],
+          );
+          event.currentTarget.textContent = warmLighting ? "Reset lighting" : "Warm lighting";
+          status.textContent = `Lighting ${warmLighting ? "warmed" : "reset"}`;
+        });
+        let orthographic = false;
+        document.querySelector("#projection").addEventListener("click", (event) => {
+          orthographic = !orthographic;
+          engine.set_camera_projection(orthographic ? "orthographic" : "perspective", 7.5);
+          event.currentTarget.textContent = orthographic ? "Perspective camera" : "Orthographic camera";
+          status.textContent = `${orthographic ? "Orthographic" : "Perspective"} projection · caricature framing demo`;
+        });
+      } catch (error) {
+        status.textContent = `Startup failed: ${error}`;
+        console.error(error);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gpteng WebMCP</title>
+<style>
+  :root { color-scheme: dark; font: 16px system-ui, sans-serif; background: #10141b; color: #e8edf5; }
+  body { max-width: 760px; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.8rem; } p, li { color: #b6c1d0; line-height: 1.55; }
+  code { color: #9dd8ff; } #status { padding: .8rem 1rem; border: 1px solid #354357; border-radius: .6rem; }
+  li { margin: .55rem 0; } .ok { color: #8fe0b0; } .bad { color: #ffb6a9; }
+</style>
+<main>
+  <h1>gpteng WebMCP tools</h1>
+  <p>This page publishes the engine's native MCP tools to browser agents using WebMCP. Calls are forwarded to the running gpteng engine.</p>
+  <p id="status">Connecting…</p>
+  <ul id="tools"></ul>
+</main>
+<script type="module">
+  const status = document.querySelector('#status');
+  const list = document.querySelector('#tools');
+  if (!('modelContext' in document)) {
+    status.className = 'bad';
+    status.textContent = 'This browser does not expose document.modelContext. Open this page in a WebMCP-enabled browser.';
+  } else {
+    try {
+      const tools = await (await fetch('/api/tools')).json();
+      for (const tool of tools) {
+        await document.modelContext.registerTool({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.input_schema,
+          annotations: { readOnlyHint: tool.read_only },
+          async execute(input, { signal }) {
+            const response = await fetch(`/api/tools/${encodeURIComponent(tool.name)}`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(input ?? {}),
+              signal,
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error ?? response.statusText);
+            return payload;
+          },
+        });
+        const item = document.createElement('li');
+        item.innerHTML = `<code></code> — <span></span>`;
+        item.querySelector('code').textContent = tool.name;
+        item.querySelector('span').textContent = tool.description;
+        list.append(item);
+      }
+      status.className = 'ok';
+      status.textContent = `Registered ${tools.length} engine tools with document.modelContext.`;
+    } catch (error) {
+      status.className = 'bad';
+      status.textContent = `WebMCP registration failed: ${error}`;
+    }
+  }
+</script>
+</html>
